@@ -156,13 +156,29 @@ const parseViaGoogleRpc = async (
 			throw new Error("missing translated text from Google RPC response");
 		}
 
+		const sourceCardsRequest = options.audio
+			? buildSourceCardsRequest(
+				templates,
+				options.text,
+				translation.resolvedFrom,
+				options.to,
+			)
+			: undefined;
 		const targetCardsRequest = buildTargetCardsRequest(
 			templates,
 			translation.result,
 			options.to,
 			translation.resolvedFrom,
 		);
-		const cardResponses = await executeGoogleRpc(page, [targetCardsRequest]);
+		const cardResponses = await executeGoogleRpc(page, [
+			...(sourceCardsRequest ? [sourceCardsRequest] : []),
+			targetCardsRequest,
+		]);
+		const sourceCards = sourceCardsRequest
+			? parseCardsPayload(
+				extractRpcPayload(cardResponses.sourceCards.body, templates.ids.cards),
+			)
+			: undefined;
 		const targetCards = parseCardsPayload(
 			extractRpcPayload(cardResponses.targetCards.body, templates.ids.cards),
 		);
@@ -174,7 +190,7 @@ const parseViaGoogleRpc = async (
 				templates,
 				options.text,
 				translation.result,
-				targetCards.headword,
+				sourceCards?.headword,
 				translation.resolvedFrom,
 				options.to,
 			);
@@ -263,8 +279,34 @@ const buildTargetCardsRequest = (
 		next[0][0] = text;
 		next[0][1] = from;
 		next[0][2] = to;
+		next[1] = 2;
 		return next;
 	});
+
+const buildSourceCardsRequest = (
+	templates: GoogleRpcTemplateCache,
+	text: string,
+	from: string,
+	to: string,
+) => {
+	const request = buildRpcRequest(
+		templates.templates.targetCards,
+		(payload) => {
+			const next = cloneJson(payload);
+			if (!Array.isArray(next) || !Array.isArray(next[0])) {
+				throw new Error("unexpected source cards payload template");
+			}
+
+			next[0][0] = text;
+			next[0][1] = from;
+			next[0][2] = to;
+			next[1] = 1;
+			return next;
+		},
+	);
+	request.responseKey = "sourceCards";
+	return request;
+};
 
 const buildAudioRequest = (
 	templates: GoogleRpcTemplateCache,
@@ -311,7 +353,7 @@ const fetchAudioData = async (
 	templates: GoogleRpcTemplateCache,
 	sourceText: string,
 	translatedText: string,
-	dictionaryHeadword: string | undefined,
+	sourceDictionaryHeadword: string | undefined,
 	sourceLang: string,
 	targetLang: string,
 ) => {
@@ -326,12 +368,13 @@ const fetchAudioData = async (
 		},
 	];
 
-	const normalizedHeadword = dictionaryHeadword?.trim();
+	const normalizedSourceText = sourceText.trim();
+	const normalizedHeadword = sourceDictionaryHeadword?.trim();
 	const needsDictionaryAudio = normalizedHeadword &&
-		normalizedHeadword !== translatedText;
+		normalizedHeadword !== normalizedSourceText;
 	if (needsDictionaryAudio) {
 		requests.push({
-			...buildAudioRequest(templates, normalizedHeadword, targetLang),
+			...buildAudioRequest(templates, normalizedHeadword, sourceLang),
 			responseKey: "dictionaryAudio",
 		});
 	}
@@ -341,9 +384,11 @@ const fetchAudioData = async (
 	const translationAudio = extractAudioBase64FromBody(
 		responses.translationAudio.body,
 	);
-	const dictionaryAudio = needsDictionaryAudio
-		? extractAudioBase64FromBody(responses.dictionaryAudio.body)
-		: translationAudio;
+	const dictionaryAudio = normalizedHeadword
+		? needsDictionaryAudio
+			? extractAudioBase64FromBody(responses.dictionaryAudio.body)
+			: sourceAudio
+		: undefined;
 
 	return {
 		...(sourceAudio && { source: toAudioDataUrl(sourceAudio) }),
