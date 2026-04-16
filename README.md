@@ -1,6 +1,6 @@
 # Translateer
 
-An unlimited free Google Translate API using Puppeteer.
+An unlimited free Google Translate API backed by a real browser session.
 
 > This service is provided to the public for **educational purposes only**.
 
@@ -21,8 +21,18 @@ curl 'https://t.song.work/api?text=chien&from=fr&to=en&audio=true'
 
 Visit <https://t.song.work/> to see more usage.
 
-**This free demo can only serve 5 concurrent requests.** It does not collect any
-data.
+This free demo is best-effort and does not collect any data.
+
+## How It Works
+
+Translateer keeps one long-lived Google Translate page alive and executes
+browser-originated RPC requests from inside that page. Runtime requests do not
+scrape the UI; they reuse the page's live cookies and request context to fetch:
+
+- translations
+- rich details such as examples, definitions, and translation groups
+- pronunciation audio
+- typo correction and autocomplete suggestions
 
 ## Self-Hosted
 
@@ -49,13 +59,7 @@ data.
    git clone https://github.com/songkeys/translateer.git
    ```
 
-2. Install dependencies and build
-
-   ```bash
-   deno install
-   ```
-
-3. Run the server
+2. Run the server
 
    ```bash
    deno task start
@@ -65,10 +69,9 @@ data.
 
 See the markdown table below:
 
-| Variable     | Description                                 | Default |
-| ------------ | ------------------------------------------- | ------- |
-| `PORT`       | Port to listen on                           | `8999`  |
-| `PAGE_COUNT` | Number of browser pages to hold for speedup | `5`     |
+| Variable | Description       | Default |
+| -------- | ----------------- | ------- |
+| `PORT`   | Port to listen on | `8999`  |
 
 ## Audio Response
 

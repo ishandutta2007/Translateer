@@ -1,26 +1,30 @@
 import { serveDir } from "@std/http";
 import { resolve } from "@std/path";
-import PagePool, { pagePool } from "./pagepool.ts";
+import BrowserSession, { browserSession } from "./browser_session.ts";
+import { ensureGoogleRpcTemplates } from "./google_rpc.ts";
 import { parsePage } from "./parser.ts";
 
-const { PAGE_COUNT = "5", PORT = "8999" } = Deno.env.toObject();
+const { PORT = "8999" } = Deno.env.toObject();
 
-console.log("initializing pages...");
+console.log("initializing browser session...");
 
 try {
-	await new PagePool(parseInt(PAGE_COUNT, 10)).init();
+	await new BrowserSession().init();
+	await browserSession.withIsolatedPage(async (page) => {
+		await ensureGoogleRpcTemplates(page, { validate: true });
+	});
 } catch (e) {
-	console.log("Failed to initialize pages");
+	console.log("Failed to initialize browser session");
 	console.error(e);
 	Deno.exit(1);
 }
 
 console.log("ready");
 
-// on exit, close the page pool
+// on exit, close the browser session
 Deno.addSignalListener("SIGINT", async () => {
 	console.log("SIGINT");
-	await pagePool.close();
+	await browserSession.close();
 	Deno.exit(0);
 });
 
@@ -29,17 +33,16 @@ Deno.serve({ port: parseInt(PORT, 10) }, async (req) => {
 		const url = new URL(req.url);
 
 		if (url.pathname === "/api") {
+			const requestBody = await readJsonBody(req);
 			const options = {
 				text: url.searchParams.get("text"),
 				from: url.searchParams.get("from") ?? "auto",
 				to: url.searchParams.get("to") ?? "zh-CN",
-				lite: url.searchParams.get("lite") === "true",
 				audio: url.searchParams.get("audio") === "true",
-				...(await req.json().catch(() => ({}))),
+				...requestBody,
 			};
 
 			const { text, from, to } = options;
-			const lite = options.lite === true || options.lite === "true";
 			const audio = options.audio === true || options.audio === "true";
 
 			if (!text) {
@@ -55,27 +58,14 @@ Deno.serve({ port: parseInt(PORT, 10) }, async (req) => {
 				);
 			}
 
-			const page = pagePool.getPage();
-			if (!page) {
-				serverLog(req, 400);
-				return new Response(
-					JSON.stringify({ error: 1, message: "No available pages" }),
-					{
-						status: 400,
-						headers: {
-							"Content-Type": "application/json; charset=utf-8",
-						},
-					},
-				);
-			}
-
 			try {
-				const result = await parsePage(page, {
-					text,
-					from,
-					to,
-					lite,
-					audio,
+				const result = await browserSession.withPage(async (page) => {
+						return await parsePage(page, {
+							text,
+							from,
+							to,
+							audio,
+						});
 				});
 				serverLog(req, 200);
 				return new Response(JSON.stringify(result), {
@@ -85,6 +75,7 @@ Deno.serve({ port: parseInt(PORT, 10) }, async (req) => {
 					},
 				});
 			} catch (e) {
+				browserSession.requestRefresh(e);
 				serverLog(req, 500);
 				console.error(e);
 				return new Response(
@@ -96,8 +87,6 @@ Deno.serve({ port: parseInt(PORT, 10) }, async (req) => {
 						},
 					},
 				);
-			} finally {
-				pagePool.releasePage(page);
 			}
 		}
 
@@ -121,6 +110,19 @@ Deno.serve({ port: parseInt(PORT, 10) }, async (req) => {
 		);
 	}
 });
+
+async function readJsonBody(req: Request) {
+	if (req.method === "GET" || req.method === "HEAD") {
+		return {};
+	}
+
+	const contentType = req.headers.get("content-type") ?? "";
+	if (!contentType.includes("application/json")) {
+		return {};
+	}
+
+	return await req.json().catch(() => ({}));
+}
 
 function serverLog(req: Request, status: number) {
 	const d = new Date().toISOString();
