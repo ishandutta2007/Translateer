@@ -17,7 +17,7 @@
 		</style>
 		<title>Translateer - Google Translate API</title>
 	</head>
-	<body class="bg-indigo-lightest font-mono">
+	<body class="bg-indigo-50 font-mono">
 		<article
 			class="mx-auto p-2 prose text-sm md:text-base lg:text-lg xl:text-xl"
 		>
@@ -26,10 +26,23 @@
 				Translateer
 			</h1>
 
-			<blockquote>A free Google Translate API using Puppeteer.</blockquote>
+			<blockquote>
+				A free Google Translate API backed by a real browser session.
+			</blockquote>
 
 			<h2>Usage</h2>
 			<div id="usage-code" class="not-prose"></div>
+
+			<h3>Example Response</h3>
+			<p>The response below matches the request shown above.</p>
+			<div
+				style="height: 24rem"
+				class="overflow-y-auto not-prose"
+				id="example-response"
+			>
+				Loading
+			</div>
+
 			<h3>Parameters</h3>
 			<table>
 				<thead>
@@ -59,8 +72,8 @@
 						<td>The language code of the target text.</td>
 						<td><code>zh-CN</code></td>
 					</tr>
-						<tr>
-							<td>audio</td>
+					<tr>
+						<td>audio</td>
 						<td>boolean</td>
 						<td>
 							If true, include pronunciation audio as data URLs for the source
@@ -87,14 +100,113 @@
 					here</a>.
 			</blockquote>
 
-			<h2>Example Response</h2>
-			<div
-				style="height: 24rem"
-				class="overflow-y-auto not-prose"
-				id="example-response"
-			>
-				Loading
-			</div>
+			<h2>Response Fields</h2>
+			<p>
+				Paths use dot notation. Optional fields only appear when Google returns
+				them for the current request.
+			</p>
+			<table>
+				<thead>
+					<tr>
+						<th>Path</th>
+						<th>Type</th>
+						<th>Meaning</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr>
+						<td><code>result</code></td>
+						<td>string</td>
+						<td>The translated text.</td>
+					</tr>
+					<tr>
+						<td><code>from</code></td>
+						<td>object?</td>
+						<td>Source-side metadata.</td>
+					</tr>
+					<tr>
+						<td><code>from.detectedLanguage</code></td>
+						<td>string?</td>
+						<td>Detected source language when <code>from=auto</code>.</td>
+					</tr>
+					<tr>
+						<td><code>from.didYouMean</code></td>
+						<td>string?</td>
+						<td>Spelling correction suggested by Google.</td>
+					</tr>
+					<tr>
+						<td><code>from.suggestions[]</code></td>
+						<td>object[]?</td>
+						<td>
+							Autocomplete suggestions with <code>text</code> and
+							<code>translation</code>.
+						</td>
+					</tr>
+					<tr>
+						<td><code>from.pronunciation</code></td>
+						<td>string?</td>
+						<td>Pronunciation of the source text.</td>
+					</tr>
+					<tr>
+						<td><code>pronunciation</code></td>
+						<td>string?</td>
+						<td>Pronunciation of the translated text or headword.</td>
+					</tr>
+					<tr>
+						<td><code>audio</code></td>
+						<td>object?</td>
+						<td>Audio data URLs when <code>audio=true</code>.</td>
+					</tr>
+					<tr>
+						<td><code>audio.source</code></td>
+						<td>string?</td>
+						<td>Source speaker audio.</td>
+					</tr>
+					<tr>
+						<td><code>audio.translation</code></td>
+						<td>string?</td>
+						<td>Translated speaker audio.</td>
+					</tr>
+					<tr>
+						<td><code>audio.dictionary</code></td>
+						<td>string?</td>
+						<td>Dictionary headword audio when Google exposes it.</td>
+					</tr>
+					<tr>
+						<td><code>examples[]</code></td>
+						<td>string[]?</td>
+						<td>Example usages for the translated headword.</td>
+					</tr>
+					<tr>
+						<td><code>definitions</code></td>
+						<td>object?</td>
+						<td>Definitions grouped by part of speech.</td>
+					</tr>
+					<tr>
+						<td><code>definitions.&lt;partOfSpeech&gt;[]</code></td>
+						<td>object[]</td>
+						<td>
+							Entries with <code>definition</code> and optional
+							<code>example</code>, <code>labels</code>, and
+							<code>synonyms</code>.
+						</td>
+					</tr>
+					<tr>
+						<td><code>translations</code></td>
+						<td>object?</td>
+						<td>Reverse translations grouped by part of speech.</td>
+					</tr>
+					<tr>
+						<td><code>translations.&lt;partOfSpeech&gt;[]</code></td>
+						<td>object[]</td>
+						<td>
+							Entries with <code>translation</code>,
+							<code>reversedTranslations</code>, and
+							<code>frequency</code>.
+						</td>
+					</tr>
+				</tbody>
+			</table>
 
 			<h2>Disclaimer</h2>
 
@@ -152,14 +264,23 @@
 				],
 			};
 		</script>
-		<script src="https://cdn.jsdelivr.net/npm/@unocss/runtime"></script>
+		<script
+			src="https://cdn.jsdelivr.net/npm/@unocss/runtime/core.global.js"
+		></script>
 		<script type="module">
 			import { codeToHtml } from "https://esm.sh/shiki@1.0.0";
 
 			const entry = location.origin;
+			const exampleParams = new URLSearchParams({
+				text: "buenos días",
+				from: "auto",
+				to: "en",
+			});
+			const examplePath = `api?${exampleParams.toString()}`;
+			const exampleUrl = `${entry}/${examplePath}`;
 
 			const usageCode = await codeToHtml(
-				`$ curl '${entry}/api?text=hello&from=en&to=zh-CN'`,
+				`$ curl '${exampleUrl}'`,
 				{
 					lang: "bash",
 					theme: "github-dark",
@@ -168,7 +289,7 @@
 
 			document.getElementById("usage-code").innerHTML = usageCode;
 
-			fetch("api?text=do")
+			fetch(examplePath)
 				.then((res) => res.json())
 				.then(async (res) => {
 					document.getElementById("example-response").innerHTML =
