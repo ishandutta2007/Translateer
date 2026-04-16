@@ -67,8 +67,23 @@
 						</td>
 						<td><code>false</code></td>
 					</tr>
+					<tr>
+						<td>audio</td>
+						<td>boolean</td>
+						<td>
+							If true, include pronunciation audio as data URLs for the source
+							text, translation, and dictionary headword when available.
+						</td>
+						<td><code>false</code></td>
+					</tr>
 				</tbody>
 			</table>
+
+			<blockquote>
+				Audio responses are returned as <code>data:audio/*;base64,...</code>
+				URLs, so enabling <code>audio</code> can make the JSON response much
+				larger.
+			</blockquote>
 
 			<blockquote>
 				The language code is in ISO-639-1 format. See all available code listed

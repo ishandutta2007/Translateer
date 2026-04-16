@@ -2,6 +2,12 @@ import type { Page } from "./pagepool.ts";
 
 type IExamples = string[];
 
+type IAudio = {
+	source?: string;
+	translation?: string;
+	dictionary?: string;
+};
+
 type IDefinitions = Record<
 	string,
 	{
@@ -21,6 +27,278 @@ type ITranslations = Record<
 	}[]
 >;
 
+const GOOGLE_BATCHEXECUTE_URL =
+	"https://translate.google.com/_/TranslateWebserverUi/data/batchexecute";
+const AUDIO_RPC_ID = "jQ1olc";
+
+const extractBatchedJsonChunks = (body: string) => {
+	const lines = body.split("\n").filter(Boolean);
+	const chunks: unknown[] = [];
+
+	for (let i = 0; i < lines.length; i++) {
+		if (lines[i] === ")]}'") {
+			continue;
+		}
+
+		if (/^\d+$/.test(lines[i]) && i + 1 < lines.length) {
+			const candidate = lines[i + 1];
+			if (candidate.startsWith("[")) {
+				try {
+					chunks.push(JSON.parse(candidate));
+				} catch {
+					// Ignore non-JSON chunks in the batchexecute envelope.
+				}
+			}
+			i += 1;
+		}
+	}
+
+	return chunks;
+};
+
+const extractAudioBase64FromBody = (body: string) => {
+	const wrbEntry = extractBatchedJsonChunks(body)
+		.flatMap((chunk) => Array.isArray(chunk) ? chunk : [])
+		.find((entry) =>
+			Array.isArray(entry) &&
+			entry[0] === "wrb.fr" &&
+			entry[1] === AUDIO_RPC_ID &&
+			typeof entry[2] === "string"
+		);
+
+	if (!wrbEntry || typeof wrbEntry[2] !== "string") {
+		return undefined;
+	}
+
+	try {
+		const payload = JSON.parse(wrbEntry[2]);
+		return Array.isArray(payload) && typeof payload[0] === "string"
+			? payload[0]
+			: undefined;
+	} catch {
+		return undefined;
+	}
+};
+
+const detectAudioMimeTypeFromBase64 = (base64: string) => {
+	const bytes = Uint8Array.from(
+		atob(base64.slice(0, 64)),
+		(char) => char.charCodeAt(0),
+	);
+
+	if (
+		bytes[0] === 0x49 &&
+		bytes[1] === 0x44 &&
+		bytes[2] === 0x33
+	) {
+		return "audio/mpeg";
+	}
+
+	if (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) {
+		return "audio/mpeg";
+	}
+
+	if (
+		bytes[0] === 0x52 &&
+		bytes[1] === 0x49 &&
+		bytes[2] === 0x46 &&
+		bytes[3] === 0x46
+	) {
+		return "audio/wav";
+	}
+
+	if (
+		bytes[0] === 0x4f &&
+		bytes[1] === 0x67 &&
+		bytes[2] === 0x67 &&
+		bytes[3] === 0x53
+	) {
+		return "audio/ogg";
+	}
+
+	return "application/octet-stream";
+};
+
+const toAudioDataUrl = (base64: string) =>
+	`data:${detectAudioMimeTypeFromBase64(base64)};base64,${base64}`;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const findVisibleButton = async (
+	page: Page,
+	selector: string,
+	timeout = 5000,
+) => {
+	const deadline = Date.now() + timeout;
+
+	while (Date.now() < deadline) {
+		const buttons = await page.$$(selector);
+
+		for (const button of buttons) {
+			const box = await button.boundingBox();
+			if (box && box.width > 0 && box.height > 0) {
+				return button;
+			}
+		}
+
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+
+	return undefined;
+};
+
+const extractAudioRequestKeyFromPostData = (postData?: string | null) => {
+	if (!postData) {
+		return undefined;
+	}
+
+	try {
+		const params = new URLSearchParams(postData);
+		const batchPayload = params.get("f.req");
+		if (!batchPayload) {
+			return undefined;
+		}
+
+		const entries = JSON.parse(batchPayload);
+		const firstEntry = entries?.[0]?.[0];
+		if (
+			!Array.isArray(firstEntry) ||
+			firstEntry[0] !== AUDIO_RPC_ID ||
+			typeof firstEntry[1] !== "string"
+		) {
+			return undefined;
+		}
+
+		return firstEntry[1];
+	} catch {
+		return undefined;
+	}
+};
+
+const isAudioRpcRequest = (url: string) => {
+	if (!url.startsWith(GOOGLE_BATCHEXECUTE_URL)) {
+		return false;
+	}
+
+	try {
+		return new URL(url).searchParams.get("rpcids") === AUDIO_RPC_ID;
+	} catch {
+		return false;
+	}
+};
+
+const captureAudioDataUrls = async (
+	page: Page,
+	jobs: { role: keyof IAudio; selector: string }[],
+) => {
+	const visibleJobs = (
+		await Promise.all(
+			jobs.map(async (job) => ({
+				...job,
+				hasButton: Boolean(await findVisibleButton(page, job.selector)),
+			})),
+		)
+	).filter(
+		(job): job is { role: keyof IAudio; selector: string; hasButton: true } =>
+			job.hasButton,
+	);
+
+	if (visibleJobs.length === 0) {
+		return undefined;
+	}
+
+	const audioByRequestKey = new Map<string, string>();
+	const onResponse = async (response: {
+		url(): string;
+		request(): { postData(): string | undefined };
+		text(): Promise<string>;
+	}) => {
+		if (!isAudioRpcRequest(response.url())) {
+			return;
+		}
+
+		const requestKey = extractAudioRequestKeyFromPostData(
+			response.request().postData(),
+		);
+		if (!requestKey || audioByRequestKey.has(requestKey)) {
+			return;
+		}
+
+		const body = await response.text().catch(() => undefined);
+		if (!body) {
+			return;
+		}
+
+		const audioBase64 = extractAudioBase64FromBody(body);
+		if (!audioBase64) {
+			return;
+		}
+
+		audioByRequestKey.set(requestKey, toAudioDataUrl(audioBase64));
+	};
+
+	page.on("response", onResponse);
+
+	try {
+		const roleRequests: { role: keyof IAudio; requestKey?: string }[] = [];
+
+		// Capture each outgoing audio request as soon as it is dispatched, then let
+		// the corresponding responses resolve in parallel on the shared page.
+		for (const job of visibleJobs) {
+			const button = await findVisibleButton(page, job.selector);
+			if (!button) {
+				roleRequests.push({ role: job.role });
+				continue;
+			}
+
+			const requestPromise = page.waitForRequest((request) => {
+				return isAudioRpcRequest(request.url());
+			}, { timeout: 5000 }).catch(() => undefined);
+
+			await button.click();
+
+			const request = await requestPromise;
+			roleRequests.push({
+				role: job.role,
+				requestKey: extractAudioRequestKeyFromPostData(request?.postData()),
+			});
+		}
+
+		const uniqueKeys = [
+			...new Set(
+				roleRequests
+					.map((job) => job.requestKey)
+					.filter((requestKey): requestKey is string => Boolean(requestKey)),
+			),
+		];
+		const deadline = Date.now() + 5000;
+
+		while (
+			uniqueKeys.some((requestKey) => !audioByRequestKey.has(requestKey)) &&
+			Date.now() < deadline
+		) {
+			await sleep(50);
+		}
+
+		const audio = roleRequests.reduce<IAudio>((result, job) => {
+			if (!job.requestKey) {
+				return result;
+			}
+
+			const dataUrl = audioByRequestKey.get(job.requestKey);
+			if (dataUrl) {
+				result[job.role] = dataUrl;
+			}
+
+			return result;
+		}, {});
+
+		return Object.keys(audio).length > 0 ? audio : undefined;
+	} finally {
+		page.off("response", onResponse);
+	}
+};
+
 export const parsePage = async (
 	page: Page,
 	{
@@ -28,11 +306,13 @@ export const parsePage = async (
 		from,
 		to,
 		lite,
+		audio,
 	}: {
 		text: string;
 		from: string;
 		to: string;
 		lite: boolean;
+		audio: boolean;
 	},
 ) => {
 	const textareaSelector = "textarea[aria-label='Source text']";
@@ -454,6 +734,29 @@ export const parsePage = async (
 		from === "auto",
 	);
 
+	const audioData: IAudio | undefined = audio
+		? await captureAudioDataUrls(page, [
+			{
+				role: "source",
+				selector: 'button[aria-label="Listen to source text"]',
+			},
+			{
+				role: "translation",
+				selector: 'button[aria-label="Listen to translation"]',
+			},
+			...(!lite
+				? [{
+					role: "dictionary" as const,
+					selector: `c-wiz[role="complementary"] button[aria-label="Listen"]`,
+				}]
+				: []),
+		])
+		: undefined;
+	const hasAudio = Boolean(
+		audioData &&
+			(audioData.source || audioData.translation || audioData.dictionary),
+	);
+
 	return {
 		result,
 		// fromISO,
@@ -465,6 +768,7 @@ export const parsePage = async (
 			},
 		}),
 		...(pronunciation && { pronunciation }),
+		...(hasAudio && { audio: audioData }),
 		examples,
 		definitions,
 		translations,

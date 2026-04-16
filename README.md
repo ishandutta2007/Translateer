@@ -12,6 +12,13 @@ Try it out:
 curl 'https://t.song.work/api?text=hello&from=en&to=zh-CN'
 ```
 
+To include pronunciation audio as data URLs for the source text, translated
+text, and dictionary headword when available:
+
+```bash
+curl 'https://t.song.work/api?text=chien&from=fr&to=en&audio=true'
+```
+
 Visit <https://t.song.work/> to see more usage.
 
 **This free demo can only serve 5 concurrent requests.** It does not collect any
@@ -62,6 +69,19 @@ See the markdown table below:
 | ------------ | ------------------------------------------- | ------- |
 | `PORT`       | Port to listen on                           | `8999`  |
 | `PAGE_COUNT` | Number of browser pages to hold for speedup | `5`     |
+
+## Audio Response
+
+When `audio=true`, the API may return an `audio` object with:
+
+- `source`: a `data:audio/mpeg;base64,...` URL for the source speaker button
+- `translation`: a `data:audio/mpeg;base64,...` URL for the translated speaker
+  button
+- `dictionary`: a `data:audio/mpeg;base64,...` URL for the dictionary headword
+  speaker button when Google exposes one
+
+Audio fields are omitted when Google does not expose a matching speaker button
+or audio payload for the current text.
 
 ## Raycast Extension
 

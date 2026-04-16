@@ -34,10 +34,13 @@ Deno.serve({ port: parseInt(PORT, 10) }, async (req) => {
 				from: url.searchParams.get("from") ?? "auto",
 				to: url.searchParams.get("to") ?? "zh-CN",
 				lite: url.searchParams.get("lite") === "true",
+				audio: url.searchParams.get("audio") === "true",
 				...(await req.json().catch(() => ({}))),
 			};
 
-			const { text, from, to, lite } = options;
+			const { text, from, to } = options;
+			const lite = options.lite === true || options.lite === "true";
+			const audio = options.audio === true || options.audio === "true";
 
 			if (!text) {
 				serverLog(req, 400);
@@ -67,7 +70,13 @@ Deno.serve({ port: parseInt(PORT, 10) }, async (req) => {
 			}
 
 			try {
-				const result = await parsePage(page, { text, from, to, lite });
+				const result = await parsePage(page, {
+					text,
+					from,
+					to,
+					lite,
+					audio,
+				});
 				serverLog(req, 200);
 				return new Response(JSON.stringify(result), {
 					status: 200,
