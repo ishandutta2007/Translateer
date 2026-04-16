@@ -46,7 +46,9 @@ type ITranslations = Record<
 type TranslationResult = {
 	result: string;
 	resolvedFrom: string;
+	detectedLanguage?: string;
 	didYouMean?: string;
+	sourcePronunciation?: string;
 };
 
 type CardResult = {
@@ -154,26 +156,13 @@ const parseViaGoogleRpc = async (
 			throw new Error("missing translated text from Google RPC response");
 		}
 
-		const sourceCardsRequest = buildSourceCardsRequest(
-			templates,
-			options.text,
-			translation.resolvedFrom,
-			options.to,
-		);
 		const targetCardsRequest = buildTargetCardsRequest(
 			templates,
 			translation.result,
 			options.to,
 			translation.resolvedFrom,
 		);
-		const cardResponses = await executeGoogleRpc(page, [
-			sourceCardsRequest,
-			targetCardsRequest,
-		]);
-
-		const sourceCards = parseCardsPayload(
-			extractRpcPayload(cardResponses.sourceCards.body, templates.ids.cards),
-		);
+		const cardResponses = await executeGoogleRpc(page, [targetCardsRequest]);
 		const targetCards = parseCardsPayload(
 			extractRpcPayload(cardResponses.targetCards.body, templates.ids.cards),
 		);
@@ -196,31 +185,36 @@ const parseViaGoogleRpc = async (
 				(audioData.source || audioData.translation || audioData.dictionary),
 		);
 
-			return {
-				result: translation.result,
-			...((translation.didYouMean || suggestions ||
-				sourceCards.pronunciation) && {
+		return {
+			result: translation.result,
+			...((translation.detectedLanguage ||
+				translation.didYouMean ||
+				suggestions ||
+				translation.sourcePronunciation) && {
 				from: {
+					...(translation.detectedLanguage && {
+						detectedLanguage: translation.detectedLanguage,
+					}),
 					...(translation.didYouMean && { didYouMean: translation.didYouMean }),
 					...(suggestions && { suggestions }),
-					...(sourceCards.pronunciation && {
-						pronunciation: sourceCards.pronunciation,
+					...(translation.sourcePronunciation && {
+						pronunciation: translation.sourcePronunciation,
 					}),
 				},
 			}),
-				...(targetCards.pronunciation &&
-					{ pronunciation: targetCards.pronunciation }),
-				...(hasAudio && { audio: audioData }),
-				...(targetCards.examples && {
-					examples: targetCards.examples,
-				}),
-				...(targetCards.definitions && {
-					definitions: targetCards.definitions,
-				}),
-				...(targetCards.translations && {
-					translations: targetCards.translations,
-				}),
-			};
+			...(targetCards.pronunciation &&
+				{ pronunciation: targetCards.pronunciation }),
+			...(hasAudio && { audio: audioData }),
+			...(targetCards.examples && {
+				examples: targetCards.examples,
+			}),
+			...(targetCards.definitions && {
+				definitions: targetCards.definitions,
+			}),
+			...(targetCards.translations && {
+				translations: targetCards.translations,
+			}),
+		};
 	} catch (error) {
 		if (!allowReinitialize) {
 			throw error;
@@ -246,24 +240,6 @@ const buildTranslationRequest = (
 		const next = cloneJson(payload);
 		if (!Array.isArray(next) || !Array.isArray(next[0])) {
 			throw new Error("unexpected translation payload template");
-		}
-
-		next[0][0] = text;
-		next[0][1] = from;
-		next[0][2] = to;
-		return next;
-	});
-
-const buildSourceCardsRequest = (
-	templates: GoogleRpcTemplateCache,
-	text: string,
-	from: string,
-	to: string,
-) =>
-	buildRpcRequest(templates.templates.sourceCards, (payload) => {
-		const next = cloneJson(payload);
-		if (!Array.isArray(next) || !Array.isArray(next[0])) {
-			throw new Error("unexpected source cards payload template");
 		}
 
 		next[0][0] = text;
@@ -390,12 +366,18 @@ const parseTranslationPayload = (
 		throw new Error("translation payload does not include text");
 	}
 
-	const resolvedFrom = typeof payload[2] === "string" && payload[2]
-		? payload[2]
-		: requestedFrom;
+	const detectedLanguage =
+		requestedFrom === "auto" && typeof payload[2] === "string" &&
+			payload[2]
+			? payload[2]
+			: undefined;
+	const resolvedFrom = detectedLanguage ?? requestedFrom;
 	const correctionEntry = payload[0]?.[1]?.[0]?.[0];
 	const correctedText = cleanText(
 		asString(correctionEntry?.[4]) ?? asString(correctionEntry?.[1]),
+	);
+	const sourcePronunciation = cleanText(
+		asString(payload[0]?.[0]) ?? asString(payload[3]?.[6]),
 	);
 	const didYouMean = correctedText &&
 			correctedText.toLowerCase() !== cleanText(sourceText)?.toLowerCase()
@@ -405,7 +387,9 @@ const parseTranslationPayload = (
 	return {
 		result: cleanText(result) ?? result,
 		resolvedFrom,
+		...(detectedLanguage && { detectedLanguage }),
 		...(didYouMean && { didYouMean }),
+		...(sourcePronunciation && { sourcePronunciation }),
 	};
 };
 

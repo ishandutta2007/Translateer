@@ -60,12 +60,12 @@ Deno.serve({ port: parseInt(PORT, 10) }, async (req) => {
 
 			try {
 				const result = await browserSession.withPage(async (page) => {
-						return await parsePage(page, {
-							text,
-							from,
-							to,
-							audio,
-						});
+					return await parsePage(page, {
+						text,
+						from,
+						to,
+						audio,
+					});
 				});
 				serverLog(req, 200);
 				return new Response(JSON.stringify(result), {

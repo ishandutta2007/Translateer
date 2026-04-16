@@ -3,7 +3,6 @@ import type { Page } from "./browser_session.ts";
 type CoreRpcTemplateName =
 	| "translate"
 	| "audio"
-	| "sourceCards"
 	| "targetCards";
 type RpcTemplateName = CoreRpcTemplateName | "autocomplete";
 
@@ -488,11 +487,6 @@ const captureTemplates = async (
 				);
 			case "audio":
 				return capturedRequests.find((request) => request.rpcId === ids.audio);
-			case "sourceCards":
-				return capturedRequests.find((request) =>
-					request.rpcId === ids.cards &&
-					getCardsDirection(request.postData, ids.cards) === 1
-				);
 			case "targetCards":
 				return capturedRequests.find((request) =>
 					request.rpcId === ids.cards &&
@@ -504,7 +498,6 @@ const captureTemplates = async (
 	const templateNames: CoreRpcTemplateName[] = [
 		"translate",
 		"audio",
-		"sourceCards",
 		"targetCards",
 	];
 	const templates = Object.fromEntries(
